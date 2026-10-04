@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dispatch — Delivery Time Prediction</title>
+  <meta name="description" content="Gradient boosting model that predicts food delivery time from information known when the order is placed. Validation MAE 3.35 minutes.">
+  <meta name="theme-color" content="#10110e">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2310110e'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%23dff25a' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='2' fill='%23ff4d24'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,520;0,9..144,640;1,9..144,520&family=Outfit:wght@340;460;560&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="progress" id="progress" aria-hidden="true"></div>
+
+  <header class="nav" id="nav">
+    <a class="brand" href="#top">
+      <span class="brand-mark" aria-hidden="true"></span>
+      Dispatch
+    </a>
+    <nav class="nav-links" aria-label="Page">
+      <a href="#method">Method</a>
+      <a href="#signals">Signals</a>
+      <a href="#models">Models</a>
+      <a href="#boosting">Boosting</a>
+      <a href="#predictions">Predictions</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <p class="spine">Food delivery · regression</p>
+      <div class="hero-copy">
+        <p class="eyebrow"><span>01</span> End-to-end machine learning</p>
+        <h1>Delivery time, known at checkout.</h1>
+        <p class="lede">A gradient boosting system predicts how many minutes a food order will take, using only what is known when the order is placed. On a held-out slice of history it misses by <em>3.35 minutes</em> — about 56% closer than guessing the average.</p>
+        <div class="hero-stats">
+          <article>
+            <strong data-count="3.35" data-decimals="2">0</strong>
+            <span>Validation MAE, minutes</span>
+          </article>
+          <article>
+            <strong data-count="56" data-suffix="%">0</strong>
+            <span>Closer than the mean baseline</span>
+          </article>
+          <article>
+            <strong data-count="2000">0</strong>
+            <span>Test orders, one prediction each</span>
+          </article>
+        </div>
+      </div>
+
+      <div class="hero-stage">
+        <article class="ticket" id="ticket">
+          <header class="ticket-top">
+            <span>Dispatch ticket</span>
+            <span class="live"><i></i> refit on 8,000</span>
+          </header>
+          <div class="route-wrap" id="route-wrap">
+            <svg id="route-svg" viewBox="0 0 360 188" role="img" aria-label="Courier route from restaurant to door">
+              <path class="route-base" d="M34 146 C 96 146, 112 42, 176 74 S 286 36, 328 108"/>
+              <path id="route-path" class="route-dash" d="M34 146 C 96 146, 112 42, 176 74 S 286 36, 328 108"/>
+              <circle cx="34" cy="146" r="5.5" class="pin pin-start"/>
+              <circle cx="328" cy="108" r="5.5" class="pin pin-end"/>
+            </svg>
+            <span class="courier" id="courier" aria-hidden="true"></span>
+            <span class="pin-label pin-label-start">Kitchen</span>
+            <span class="pin-label pin-label-end">Door</span>
+          </div>
+          <div class="ticket-body">
+            <p class="ticket-kicker">Predicted delivery</p>
+            <p class="eta"><span id="hero-eta">33.0</span><small>min</small></p>
+            <p class="ticket-meta">Order <span id="hero-order">700002</span> · test set</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="band" id="method">
+      <div class="section-head reveal">
+        <p class="eyebrow"><span>02</span> The constraint</p>
+        <h2>Nothing from after the order leaves the counter.</h2>
+        <p>The target is <code>delivery_minutes</code>. It is never an input. Identifiers are dropped too: <code>order_id</code> would not generalise, and <code>restaurant_id</code> would let the model memorise a venue instead of learning how delivery works.</p>
+      </div>
+
+      <ol class="pipeline" id="pipeline">
+        <li>
+          <span class="step-no">01</span>
+          <h3>Order arrives</h3>
+          <p>Cuisine, zone, distance, basket, courier, weather, and the placement timestamp. That is the whole world the model is allowed to see.</p>
+        </li>
+        <li>
+          <span class="step-no">02</span>
+          <h3>Clock becomes features</h3>
+          <p>The raw timestamp is replaced by hour, weekday, month, weekend, lunch rush, dinner rush, and a combined rush flag.</p>
+        </li>
+        <li>
+          <span class="step-no">03</span>
+          <h3>Pipeline learns on train only</h3>
+          <p>Median for missing numbers. The token “Unknown” for missing weather. Standardise numbers. One-hot encode categories, ignoring unseen labels at test time.</p>
+        </li>
+        <li>
+          <span class="step-no">04</span>
+          <h3>Three hundred shallow trees</h3>
+          <p>Each tree is depth 3 and is fit to the residual. The learning rate of 0.05 keeps every correction small.</p>
+        </li>
+        <li>
+          <span class="step-no">05</span>
+          <h3>One number per order</h3>
+          <p>After selection, the same pipeline is refit on all 8,000 labelled orders and scored on 2,000 unseen ones.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="split" id="signals">
+      <div class="reveal">
+        <p class="eyebrow"><span>03</span> Feature engineering</p>
+        <h2>A timestamp is a set of delivery conditions.</h2>
+        <p class="prose">Rush windows follow the notebook exactly. Lunch is hour 12 through 14. Dinner is hour 18 through 21. Weekend is Saturday and Sunday. The original clock column is not passed to the model.</p>
+        <div class="clock" id="clock" aria-hidden="true">
+          <p class="clock-raw">2025-03-01 18:42</p>
+          <div class="clock-chips">
+            <span>hour 18</span>
+            <span>Saturday</span>
+            <span>March</span>
+            <span>weekend</span>
+            <span class="hot">dinner rush</span>
+            <span class="hot">rush hour</span>
+          </div>
+        </div>
+      </div>
+      <div class="reveal">
+        <div class="clean-grid">
+          <article>
+            <h3>Median for numbers</h3>
+            <p>329 training orders are missing <code>courier_trips_completed</code>. The median is learned inside the pipeline, so the validation fold never leaks into the fill value.</p>
+          </article>
+          <article>
+            <h3>“Unknown” for weather</h3>
+            <p>228 training rows and 51 test rows have no weather. Filling with a real category would invent a sky. A dedicated missing token keeps that fact visible.</p>
+          </article>
+        </div>
+        <h3 class="rank-title">What the final trees use</h3>
+        <p class="rank-note">Share of impurity importance after the full 8,000-order refit. Bars are scaled to the strongest feature.</p>
+        <div class="ranks" id="ranks"></div>
+      </div>
+    </section>
+
+    <section class="models" id="models">
+      <div class="section-head reveal">
+        <p class="eyebrow"><span>04</span> Model selection</p>
+        <h2>Keep a change only when the held-out minute gets smaller.</h2>
+        <p>An 80/20 split with <code>random_state=42</code> holds out 1,600 orders. Mean absolute error is the metric, because the unit is already the thing a customer feels: minutes.</p>
+      </div>
+      <div class="arena reveal" id="arena"></div>
+      <div class="reject-grid">
+        <article class="reveal">
+          <p class="stamp">Not kept</p>
+          <h3>Hand-built interactions</h3>
+          <p>Items × prep, distance × rush, and distance × prep looked reasonable and even ranked high in a tree. Ablation said otherwise. Dropping them moved validation MAE to 3.35345.</p>
+        </article>
+        <article class="reveal">
+          <p class="stamp">Not kept</p>
+          <h3>PCA on the basket</h3>
+          <p>Items and subtotal were compressed to one component. Validation MAE rose to about 3.4733, and the features became harder to read. The original columns stayed.</p>
+        </article>
+        <article class="reveal">
+          <p class="stamp">Not kept</p>
+          <h3>The tuned grid</h3>
+          <p>5-fold search preferred learning rate 0.08, depth 2, 400 trees, subsample 1. Cross-validation MAE was 3.51194. On the same held-out set it scored 3.36462 — a little worse than the original, so the original stayed.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="boost" id="boosting">
+      <div class="boost-copy reveal">
+        <p class="eyebrow"><span>05</span> The algorithm, on a real order</p>
+        <h2>Each tree only has to fix what is still wrong.</h2>
+        <p>Gradient boosting starts near the training average, about 32 minutes. Tree one is still close to that average. Later trees, each of depth 3, nudge the prediction by a fraction of the residual. The path below is <code>staged_predict</code> from the validation model, not an illustration.</p>
+        <dl class="spec">
+          <div><dt>Estimators</dt><dd>300</dd></div>
+          <div><dt>Learning rate</dt><dd>0.05</dd></div>
+          <div><dt>Max depth</dt><dd>3</dd></div>
+          <div><dt>Seed</dt><dd>42</dd></div>
+        </dl>
+      </div>
+
+      <div class="boost-stage reveal">
+        <div class="case-switch" role="tablist" aria-label="Validation orders">
+          <button type="button" class="is-on" data-case="0" role="tab" aria-selected="true">Near perfect</button>
+          <button type="button" data-case="1" role="tab" aria-selected="false">Typical miss</button>
+          <button type="button" data-case="2" role="tab" aria-selected="false">Outlier</button>
+        </div>
+        <div class="boost-readout">
+          <div>
+            <span>Order</span>
+            <strong id="boost-order">—</strong>
+          </div>
+          <div>
+            <span>Actual</span>
+            <strong id="boost-actual">—</strong>
+          </div>
+          <div>
+            <span>Prediction</span>
+            <strong id="boost-pred">—</strong>
+          </div>
+          <div>
+            <span>Absolute error</span>
+            <strong id="boost-err">—</strong>
+          </div>
+        </div>
+        <p class="boost-context" id="boost-context"></p>
+        <div class="chart-frame">
+          <svg id="chart" viewBox="0 0 720 340" role="img" aria-labelledby="chart-title"></svg>
+          <p id="chart-title" class="sr-only">Prediction moving toward the actual delivery time as trees are added.</p>
+        </div>
+        <div class="boost-controls">
+          <button type="button" id="boost-play" aria-pressed="true">Pause</button>
+          <div class="scrub" id="scrub" role="group" aria-label="Trees fitted"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="predict" id="predictions">
+      <div class="section-head reveal">
+        <p class="eyebrow"><span>06</span> Test file</p>
+        <h2>Two thousand orders. Two thousand predictions.</h2>
+        <p>The selected pipeline was retrained on every labelled order, then applied to <code>deliveries_test.csv</code>. <code>predictions.csv</code> has columns <code>order_id</code> and <code>predicted_minutes</code>. No test label was used, because none is available.</p>
+      </div>
+
+      <div class="predict-layout">
+        <div class="reveal">
+          <div class="predict-stats" id="predict-stats"></div>
+          <h3 class="rank-title">Shape of the test predictions</h3>
+          <div class="hist" id="hist" aria-hidden="true"></div>
+          <p class="rank-note" id="hist-caption"></p>
+        </div>
+        <div class="reveal sheet">
+          <div class="sheet-bar">
+            <label>
+              Find an order
+              <input id="finder" type="search" inputmode="numeric" placeholder="700002" autocomplete="off">
+            </label>
+            <a class="download" href="predictions.csv" download>Download CSV</a>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>order_id</th><th>predicted_minutes</th></tr>
+              </thead>
+              <tbody id="pred-body"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <button type="button" id="prev-page">Previous</button>
+            <span id="page-label"></span>
+            <button type="button" id="next-page">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="outlier reveal">
+        <p class="eyebrow"><span>07</span> Where the average hides</p>
+        <h2>A 3.35 minute MAE still misses a 137 minute order.</h2>
+        <p>Validation order 702403 actually took 137 minutes. The model predicts 30.1. The trip is only 2.6 km, prep is 13.3 minutes, the vehicle is a scooter, and the weather is heavy rain at noon. The trees stay near an ordinary delivery, because nothing in the allowed features looks like a two-hour trip. Average error and the worst order are different questions.</p>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div>
+      <p class="brand">Dispatch</p>
+      <p>Final model: gradient boosting. Validation MAE 3.35345 minutes. Baseline 7.63080. Improvement 56%.</p>
+    </div>
+    <p><a href="https://github.com/HIMANSHUMOURYADTU/ML-ALGO">ML-ALGO / deliveryalgo</a></p>
+  </footer>
+
+  <script src="assets/metrics.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
