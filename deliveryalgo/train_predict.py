@@ -91,6 +91,74 @@ def make_pipeline() -> Pipeline:
     )
 
 
+def export_browser_model(pipeline: Pipeline, example: dict) -> dict:
+    """Serialize the fitted pipeline so the site can score a new order."""
+    preprocess = pipeline.named_steps["preprocess"]
+    model = pipeline.named_steps["model"]
+    numeric_pipe = preprocess.named_transformers_["num"]
+    categorical_pipe = preprocess.named_transformers_["cat"]
+    encoder = categorical_pipe.named_steps["encoder"]
+
+    init = float(np.ravel(model.init_.predict(np.zeros((1, 1))))[0])
+    trees = []
+    for stage in model.estimators_[:, 0]:
+        tree = stage.tree_
+        trees.append(
+            {
+                "f": tree.feature.astype(int).tolist(),
+                "t": np.asarray(tree.threshold, dtype=float).tolist(),
+                "l": tree.children_left.astype(int).tolist(),
+                "r": tree.children_right.astype(int).tolist(),
+                "v": np.ravel(tree.value).astype(float).tolist(),
+            }
+        )
+
+    spec = {
+        "learning_rate": float(model.learning_rate),
+        "n_estimators": int(model.n_estimators),
+        "init": init,
+        "numeric": list(NUMERIC_FEATURES),
+        "medians": np.asarray(numeric_pipe.named_steps["imputer"].statistics_, dtype=float).tolist(),
+        "means": np.asarray(numeric_pipe.named_steps["scaler"].mean_, dtype=float).tolist(),
+        "scales": np.asarray(numeric_pipe.named_steps["scaler"].scale_, dtype=float).tolist(),
+        "categorical": [
+            {"name": name, "categories": [str(value) for value in values]}
+            for name, values in zip(CATEGORICAL_FEATURES, encoder.categories_)
+        ],
+        "trees": trees,
+        "example": example,
+    }
+    return spec
+
+
+def score_spec(spec: dict, raw: dict) -> float:
+    values = []
+    for index, name in enumerate(spec["numeric"]):
+        value = raw.get(name)
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            value = spec["medians"][index]
+        values.append((float(value) - spec["means"][index]) / spec["scales"][index])
+    for column in spec["categorical"]:
+        raw_value = raw.get(column["name"])
+        if raw_value is None or (isinstance(raw_value, float) and np.isnan(raw_value)) or raw_value == "":
+            raw_value = "Unknown"
+        raw_value = str(raw_value)
+        values.extend(1.0 if category == raw_value else 0.0 for category in column["categories"])
+    # Trees compare float32 values, matching scikit-learn's splitter.
+    vector = np.asarray(values, dtype=np.float64).astype(np.float32)
+    prediction = spec["init"]
+    rate = spec["learning_rate"]
+    for tree in spec["trees"]:
+        node = 0
+        left = tree["l"]
+        while left[node] != -1:
+            feature = vector[tree["f"][node]]
+            threshold = np.float32(tree["t"][node])
+            node = left[node] if feature <= threshold else tree["r"][node]
+        prediction += rate * tree["v"][node]
+    return float(prediction)
+
+
 def grouped_importance(pipeline: Pipeline) -> list[dict]:
     model = pipeline.named_steps["model"]
     names = pipeline.named_steps["preprocess"].get_feature_names_out()
@@ -182,6 +250,53 @@ def main() -> None:
     )
     predictions.to_csv(ROOT / "predictions.csv", index=False)
 
+    sample = test.iloc[0]
+    example = {
+        "order_placed_at": sample["order_placed_at"].strftime("%Y-%m-%dT%H:%M"),
+        "cuisine": str(sample["cuisine"]),
+        "restaurant_avg_prep_minutes": float(sample["restaurant_avg_prep_minutes"]),
+        "city_zone": str(sample["city_zone"]),
+        "distance_km": float(sample["distance_km"]),
+        "items_count": int(sample["items_count"]),
+        "order_subtotal": float(sample["order_subtotal"]),
+        "courier_vehicle": str(sample["courier_vehicle"]),
+        "courier_trips_completed": None
+        if pd.isna(sample["courier_trips_completed"])
+        else float(sample["courier_trips_completed"]),
+        "weather": None if pd.isna(sample["weather"]) else str(sample["weather"]),
+    }
+    browser_model = export_browser_model(full_model, example)
+    replayed = []
+    for row in test.itertuples(index=False):
+        replayed.append(
+            score_spec(
+                browser_model,
+                {
+                    "restaurant_avg_prep_minutes": row.restaurant_avg_prep_minutes,
+                    "distance_km": row.distance_km,
+                    "items_count": row.items_count,
+                    "order_subtotal": row.order_subtotal,
+                    "courier_trips_completed": None
+                    if pd.isna(row.courier_trips_completed)
+                    else float(row.courier_trips_completed),
+                    "hour": int(row.hour),
+                    "day_of_week": int(row.day_of_week),
+                    "month": int(row.month),
+                    "is_weekend": int(row.is_weekend),
+                    "is_lunch_rush": int(row.is_lunch_rush),
+                    "is_dinner_rush": int(row.is_dinner_rush),
+                    "is_rush_hour": int(row.is_rush_hour),
+                    "cuisine": row.cuisine,
+                    "city_zone": row.city_zone,
+                    "courier_vehicle": row.courier_vehicle,
+                    "weather": None if pd.isna(row.weather) else row.weather,
+                },
+            )
+        )
+    max_gap = float(np.max(np.abs(np.asarray(replayed) - test_predictions)))
+    if max_gap > 1e-6:
+        raise SystemExit(f"Browser model drifted from scikit-learn by {max_gap}")
+
     importances = grouped_importance(full_model)
     target = train["delivery_minutes"]
 
@@ -246,6 +361,11 @@ def main() -> None:
         "window.METRICS = " + json.dumps(summary, indent=2) + ";\n",
         encoding="utf-8",
     )
+    (assets / "model.js").write_text(
+        "window.MODEL = " + json.dumps(browser_model, separators=(",", ":")) + ";\n",
+        encoding="utf-8",
+    )
+    print(f"Browser model max gap: {max_gap:.3e}")
 
     print(f"Baseline MAE: {baseline_mae:.5f}")
     print(f"Final validation MAE: {final_mae:.5f}")

@@ -22,6 +22,7 @@
       Dispatch
     </a>
     <nav class="nav-links" aria-label="Page">
+      <a href="#try">Try it</a>
       <a href="#method">Method</a>
       <a href="#signals">Signals</a>
       <a href="#models">Models</a>
@@ -79,9 +80,76 @@
       </div>
     </section>
 
+    <section class="try" id="try">
+      <div class="section-head reveal">
+        <p class="eyebrow"><span>02</span> Live prediction</p>
+        <h2>Enter an order. The same model answers.</h2>
+        <p>Every field below is known at checkout. The page builds the time features, fills anything missing the way the training pipeline did, then walks all 300 trees. The number is the delivery time in minutes.</p>
+      </div>
+      <div class="try-grid">
+        <form class="order-form" id="order-form">
+          <div class="fields">
+            <label class="span-2">
+              <span>Order placed</span>
+              <input name="order_placed_at" type="datetime-local" required>
+            </label>
+            <label>
+              <span>Cuisine</span>
+              <select name="cuisine" required></select>
+            </label>
+            <label>
+              <span>City zone</span>
+              <select name="city_zone" required></select>
+            </label>
+            <label>
+              <span>Prep time, minutes</span>
+              <input name="restaurant_avg_prep_minutes" type="number" min="1" max="60" step="0.1" required>
+            </label>
+            <label>
+              <span>Distance, km</span>
+              <input name="distance_km" type="number" min="0.1" max="40" step="0.1" required>
+            </label>
+            <label>
+              <span>Items</span>
+              <input name="items_count" type="number" min="1" max="20" step="1" required>
+            </label>
+            <label>
+              <span>Subtotal</span>
+              <input name="order_subtotal" type="number" min="0" max="500" step="0.01" required>
+            </label>
+            <label>
+              <span>Courier vehicle</span>
+              <select name="courier_vehicle" required></select>
+            </label>
+            <label>
+              <span>Courier trips</span>
+              <input name="courier_trips_completed" type="number" min="0" step="1" placeholder="Blank if unknown">
+            </label>
+            <label class="span-2">
+              <span>Weather</span>
+              <select name="weather"></select>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="predict-btn" type="submit">Predict delivery</button>
+            <button class="ghost-btn" type="button" id="load-example">Load a test order</button>
+          </div>
+        </form>
+        <div class="try-result" aria-live="polite">
+          <p class="ticket-kicker">Predicted delivery</p>
+          <p class="eta live-eta"><span id="live-eta">—</span><small>min</small></p>
+          <p class="ticket-meta" id="live-meta">Waiting for an order</p>
+          <div class="chart-frame live-chart">
+            <svg id="live-chart" viewBox="0 0 640 180" role="img" aria-label="Prediction moving as trees are added"></svg>
+          </div>
+          <ol class="work-list" id="work-list"></ol>
+        </div>
+      </div>
+    </section>
+
     <section class="band" id="method">
       <div class="section-head reveal">
-        <p class="eyebrow"><span>02</span> The constraint</p>
+        <p class="eyebrow"><span>03</span> The constraint</p>
         <h2>Nothing from after the order leaves the counter.</h2>
         <p>The target is <code>delivery_minutes</code>. It is never an input. Identifiers are dropped too: <code>order_id</code> would not generalise, and <code>restaurant_id</code> would let the model memorise a venue instead of learning how delivery works.</p>
       </div>
@@ -117,7 +185,7 @@
 
     <section class="split" id="signals">
       <div class="reveal">
-        <p class="eyebrow"><span>03</span> Feature engineering</p>
+        <p class="eyebrow"><span>04</span> Feature engineering</p>
         <h2>A timestamp is a set of delivery conditions.</h2>
         <p class="prose">Rush windows follow the notebook exactly. Lunch is hour 12 through 14. Dinner is hour 18 through 21. Weekend is Saturday and Sunday. The original clock column is not passed to the model.</p>
         <div class="clock" id="clock" aria-hidden="true">
@@ -151,7 +219,7 @@
 
     <section class="models" id="models">
       <div class="section-head reveal">
-        <p class="eyebrow"><span>04</span> Model selection</p>
+        <p class="eyebrow"><span>05</span> Model selection</p>
         <h2>Keep a change only when the held-out minute gets smaller.</h2>
         <p>An 80/20 split with <code>random_state=42</code> holds out 1,600 orders. Mean absolute error is the metric, because the unit is already the thing a customer feels: minutes.</p>
       </div>
@@ -177,7 +245,7 @@
 
     <section class="boost" id="boosting">
       <div class="boost-copy reveal">
-        <p class="eyebrow"><span>05</span> The algorithm, on a real order</p>
+        <p class="eyebrow"><span>06</span> The algorithm, on a real order</p>
         <h2>Each tree only has to fix what is still wrong.</h2>
         <p>Gradient boosting starts near the training average, about 32 minutes. Tree one is still close to that average. Later trees, each of depth 3, nudge the prediction by a fraction of the residual. The path below is <code>staged_predict</code> from the validation model, not an illustration.</p>
         <dl class="spec">
@@ -226,7 +294,7 @@
 
     <section class="predict" id="predictions">
       <div class="section-head reveal">
-        <p class="eyebrow"><span>06</span> Test file</p>
+        <p class="eyebrow"><span>07</span> Test file</p>
         <h2>Two thousand orders. Two thousand predictions.</h2>
         <p>The selected pipeline was retrained on every labelled order, then applied to <code>deliveries_test.csv</code>. <code>predictions.csv</code> has columns <code>order_id</code> and <code>predicted_minutes</code>. No test label was used, because none is available.</p>
       </div>
@@ -263,7 +331,7 @@
       </div>
 
       <aside class="outlier reveal">
-        <p class="eyebrow"><span>07</span> Where the average hides</p>
+        <p class="eyebrow"><span>08</span> Where the average hides</p>
         <h2>A 3.35 minute MAE still misses a 137 minute order.</h2>
         <p>Validation order 702403 actually took 137 minutes. The model predicts 30.1. The trip is only 2.6 km, prep is 13.3 minutes, the vehicle is a scooter, and the weather is heavy rain at noon. The trees stay near an ordinary delivery, because nothing in the allowed features looks like a two-hour trip. Average error and the worst order are different questions.</p>
       </aside>
@@ -279,6 +347,8 @@
   </footer>
 
   <script src="assets/metrics.js"></script>
+  <script src="assets/model.js"></script>
   <script src="assets/app.js"></script>
+  <script src="assets/predict.js"></script>
 </body>
 </html>
